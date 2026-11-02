@@ -1,0 +1,40 @@
+﻿syntax = "proto3";
+option csharp_namespace = "HRFlow.Contracts";
+
+package application;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/field_mask.proto";
+
+message Application {
+  string id = 1;
+  string candidate_name = 2;
+}
+
+message ListApplicationsRequest {}
+
+message ListApplicationsResponse {
+  repeated Application items = 1;
+}
+
+message GetApplicationRequest {
+  string id = 1;
+}
+
+message DeleteApplicationRequest {
+  string id = 1;
+}
+
+message UpdateApplicationRequest {
+  Application application = 1;
+  google.protobuf.FieldMask update_mask = 2;
+}
+
+service ApplicationQuery {
+  rpc ListApplications (ListApplicationsRequest) returns (ListApplicationsResponse);
+  rpc GetApplication (GetApplicationRequest) returns (Application);
+  
+  rpc UpdateApplication (UpdateApplicationRequest) returns (Application);
+  
+  rpc DeleteApplication (DeleteApplicationRequest) returns (google.protobuf.Empty);
+}

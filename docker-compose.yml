@@ -1,0 +1,115 @@
+services:
+  gateway:
+    build:
+      dockerfile: GatewayAPI/Dockerfile
+    container_name: gateway
+    ports:
+      - "8080:8080"
+    environment:
+      - Kafka__BootstrapServers=kafka:29092
+      - Kestrel__Endpoints__Http__Url=http://+:8080
+      - Services__ApplicationEvents=http://application-events:8080
+      - Services__ScalableService=http://nginx:80
+    depends_on:
+      application-events:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+      nginx:
+        condition: service_started
+  
+  application-events:
+    build:
+      dockerfile: ApplicationEvents/Dockerfile
+    container_name: application-events
+    expose:
+      - "8080"
+    environment:
+      - Kestrel__Endpoints__Grpc__Url=http://+:8080
+      - Kestrel__Endpoints__Grpc__Protocols=Http2
+      - Kafka__BootstrapServers=kafka:29092
+      - Kafka__GroupId=gateway-api-application-events
+    depends_on:
+      kafka:
+        condition: service_healthy
+  
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+    healthcheck:
+      test: [ "CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:29092 >/dev/null 2>&1 || exit 1" ]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 15s
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: [ "CMD-SHELL", "zookeeper-shell localhost:2181 <<< 'ls /' >/dev/null 2>&1 || exit 1" ]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 15s
+  
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka-init
+    entrypoint:
+      - kafka-topics
+      - --bootstrap-server
+      - kafka:29092
+      - --create
+      - --if-not-exists
+      - --topic
+      - application-events
+      - --partitions
+      - "1"
+      - --replication-factor
+      - "1"
+    depends_on:
+      kafka:
+        condition: service_healthy
+  
+  scalable-service:
+    build:
+      dockerfile: ScalableService/Dockerfile
+    environment:
+      - Kestrel__Endpoints__Http__Url=http://+:8080
+    deploy:
+      replicas: 5
+    restart: no
+    
+  
+  nginx:
+    image: nginx:alpine
+    container_name: nginx_load_balancer
+    ports:
+      - "80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      - scalable-service
